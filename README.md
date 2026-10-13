@@ -32,7 +32,7 @@
 1. 打开游戏，输入 `/xlsettings`。
 2. 切到「测试版」页签，在 **自定义插件仓库** 里填入：
    ```
-   https://raw.githubusercontent.com/mingke/FF14AutoTreasure/main/pluginmaster.json
+   https://raw.githubusercontent.com/solenmingco/FF14AutoTreasure/main/pluginmaster.json
    ```
 3. 输入 `/xlplugins`，在「全部插件」里搜索 **自动挖宝** 并安装。
 

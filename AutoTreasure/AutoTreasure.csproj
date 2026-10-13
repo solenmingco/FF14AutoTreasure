@@ -4,7 +4,7 @@
     <Version>0.1.0.0</Version>
 
     <!-- Manifest fields. DalamudPackager copies these into AutoTreasure.json inside the zip. -->
-    <Author>mingke</Author>
+    <Author>solenmingco</Author>
     <Name>FF14 自动挖宝助手</Name>
     <Punchline>自动买图、读图、按队列挖宝，并自动清理背包垃圾。</Punchline>
     <Description>面向国服（卫月）的 FFXIV 挖宝流程自动化助手。
@@ -19,7 +19,7 @@
 需要在游戏内实测后逐步接入。
 
 主命令：/at 或 /autotreasure</Description>
-    <RepoUrl>https://github.com/mingke/FF14AutoTreasure</RepoUrl>
+    <RepoUrl>https://github.com/solenmingco/FF14AutoTreasure</RepoUrl>
     <Tags>treasure;automation;inventory;qol</Tags>
     <CategoryTags>utility</CategoryTags>
     <LoadSync>true</LoadSync>
