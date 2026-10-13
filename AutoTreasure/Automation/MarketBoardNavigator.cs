@@ -88,6 +88,22 @@ public sealed class MarketBoardNavigator
         "リテイナーベル",
     };
 
+    /// <summary>
+    /// Consecutive idle ticks required before we believe Lifestream has finished.
+    /// Guards against the case where it never queued a task and reports idle
+    /// immediately.
+    /// </summary>
+    private const int TeleportSettleTicks = 5;
+
+    /// <summary>Minimum wall-clock wait, in seconds, before judging a teleport done.</summary>
+    private const int TeleportMinWaitSeconds = 3;
+
+    /// <summary>Hard cap so a stuck teleport cannot spin forever.</summary>
+    private const int TeleportTimeoutSeconds = 90;
+
+    private DateTime teleportStartedAt;
+    private int teleportSettledTicks;
+
     private readonly Configuration configuration;
     private readonly ActivityLog activity;
     private readonly NavmeshIpc navmesh;
@@ -95,6 +111,7 @@ public sealed class MarketBoardNavigator
     private readonly IObjectTable objectTable;
     private readonly IClientState clientState;
     private readonly IDataManager dataManager;
+    private readonly IPluginLog log;
 
     public MarketBoardNavigator(
         Configuration configuration,
@@ -103,7 +120,8 @@ public sealed class MarketBoardNavigator
         LifestreamIpc lifestream,
         IObjectTable objectTable,
         IClientState clientState,
-        IDataManager dataManager)
+        IDataManager dataManager,
+        IPluginLog log)
     {
         this.configuration = configuration;
         this.activity = activity;
@@ -112,6 +130,7 @@ public sealed class MarketBoardNavigator
         this.objectTable = objectTable;
         this.clientState = clientState;
         this.dataManager = dataManager;
+        this.log = log;
     }
 
     public enum TravelPhase
@@ -272,6 +291,13 @@ public sealed class MarketBoardNavigator
             return this.WalkTo(board.Position, name);
         }
 
+        // Nothing found in this zone: report what we looked for, so the reason is
+        // visible instead of a bare "not found".
+        var hint = this.ResolveEObjNames().Board;
+        this.activity.Add(
+            $"当前地图（TerritoryType {this.clientState.TerritoryType}）未发现市场布告板。" +
+            (hint is null ? string.Empty : $"识别依据：ID {string.Join("/", MarketBoardEObjRowIds)} 或名称「{hint}」。"));
+
         // Otherwise we need to travel to the selected city first.
         var city = this.configuration.SelectedMarketCity;
         if (city is null)
@@ -297,20 +323,140 @@ public sealed class MarketBoardNavigator
             return "Lifestream 正在执行其他任务，请稍候。";
         }
 
-        if (string.IsNullOrWhiteSpace(city.TeleportArgument))
-        {
-            return $"「{city.DisplayName}」未配置传送参数，请手动前往该主城。";
-        }
-
-        var issued = this.lifestream.ExecuteCommand($"tp {city.TeleportArgument}");
+        var issued = this.TryTeleport(city, out var how);
         if (!issued)
         {
             return $"向 Lifestream 发送传送命令失败（目标：{city.DisplayName}）。";
         }
 
         this.Phase = TravelPhase.Teleporting;
-        this.activity.Success($"已请求传送到「{city.DisplayName}」，等待到达…");
+        this.teleportStartedAt = DateTime.UtcNow;
+        this.teleportSettledTicks = 0;
+        this.activity.Success($"已请求传送到「{city.DisplayName}」（{how}），等待到达…");
         return $"正在传送到「{city.DisplayName}」，到达后将自动走向市场布告板。";
+    }
+
+    /// <summary>
+    /// Teleport to the selected city, preferring a locale-independent method.
+    ///
+    /// Lifestream's <c>tp &lt;name&gt;</c> matches the destination with
+    /// <c>Contains</c> against the aetheryte's *localized* name, so an English name
+    /// such as "Old Sharlayan" silently matches nothing on a Chinese client (whose
+    /// aetheryte is named 旧萨雷安). Nothing is queued, <c>IsBusy()</c> stays false,
+    /// and the caller would wrongly conclude the teleport had finished.
+    ///
+    /// So we resolve the aetheryte id ourselves from the game's own sheets by
+    /// matching <c>Aetheryte.Territory</c> against the city's territory id, which is
+    /// language-independent, and call the typed <c>Teleport</c> IPC. The name-based
+    /// command is kept only as a fallback.
+    /// </summary>
+    private bool TryTeleport(MarketCity city, out string how)
+    {
+        var aetheryteId = this.FindAetheryteForTerritory(city.TerritoryTypeId);
+        if (aetheryteId is not null)
+        {
+            if (this.lifestream.TeleportToAetheryte(aetheryteId.Value, 0))
+            {
+                how = $"以太之光 ID {aetheryteId.Value}";
+                return true;
+            }
+        }
+
+        // Fallback: Lifestream matches the destination by substring against the
+        // aetheryte's localized name, so hand it the name the *local client* uses
+        // rather than an English literal that cannot match on a Chinese client.
+        var localName = this.FindAetheryteNameForTerritory(city.TerritoryTypeId);
+        var argument = localName ?? city.TeleportArgument;
+
+        if (!string.IsNullOrWhiteSpace(argument))
+        {
+            if (this.lifestream.ExecuteCommand($"tp {argument}"))
+            {
+                how = $"按名称传送（{argument}）";
+                return true;
+            }
+        }
+
+        how = "无可用方式";
+        return false;
+    }
+
+    /// <summary>Localized name of a territory's main aetheryte, for the name fallback.</summary>
+    private string? FindAetheryteNameForTerritory(uint territoryTypeId)
+    {
+        if (territoryTypeId == 0)
+        {
+            return null;
+        }
+
+        try
+        {
+            var sheet = this.dataManager.GetExcelSheet<Aetheryte>();
+            foreach (var row in sheet)
+            {
+                if (row.RowId == 0 || !row.IsAetheryte)
+                {
+                    continue;
+                }
+
+                var territory = row.Territory;
+                if (!territory.IsValid || territory.RowId != territoryTypeId)
+                {
+                    continue;
+                }
+
+                // Prefer the aethernet name, then the place name.
+                var placeName = row.AethernetName.IsValid
+                    ? row.AethernetName.Value.Name.ToString()
+                    : row.PlaceName.IsValid
+                        ? row.PlaceName.Value.Name.ToString()
+                        : null;
+
+                return string.IsNullOrWhiteSpace(placeName) ? null : placeName;
+            }
+        }
+        catch (Exception ex)
+        {
+            this.log.Warning(ex, "读取以太之光名称失败");
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Resolve the main aetheryte id for a territory from the game's Aetheryte sheet.
+    /// Returns null when the territory has no usable aetheryte.
+    /// </summary>
+    private uint? FindAetheryteForTerritory(uint territoryTypeId)
+    {
+        if (territoryTypeId == 0)
+        {
+            return null;
+        }
+
+        try
+        {
+            var sheet = this.dataManager.GetExcelSheet<Aetheryte>();
+            foreach (var row in sheet)
+            {
+                if (row.RowId == 0 || !row.IsAetheryte)
+                {
+                    continue;
+                }
+
+                var territory = row.Territory;
+                if (territory.IsValid && territory.RowId == territoryTypeId)
+                {
+                    return row.RowId;
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            this.log.Warning(ex, "读取以太之光表失败");
+        }
+
+        return null;
     }
 
     /// <summary>Walk to an explicit world position.</summary>
@@ -355,13 +501,42 @@ public sealed class MarketBoardNavigator
         switch (this.Phase)
         {
             case TravelPhase.Teleporting:
+                // Hard cap so a stuck teleport cannot spin forever.
+                if (DateTime.UtcNow - this.teleportStartedAt
+                    > TimeSpan.FromSeconds(TeleportTimeoutSeconds))
+                {
+                    this.Phase = TravelPhase.Idle;
+                    this.activity.Error(
+                        $"传送超过 {TeleportTimeoutSeconds} 秒仍未完成，已放弃。请检查 Lifestream 状态。");
+                    return;
+                }
+
+                // While Lifestream reports work in progress, keep waiting.
                 if (this.lifestream.IsBusy)
+                {
+                    this.teleportSettledTicks = 0;
+                    return;
+                }
+
+                // Lifestream reports idle. Two cases:
+                //   * it already finished, or
+                //   * it never actually queued anything (e.g. the name did not match,
+                //     which is exactly what happened on the CN client with English
+                //     city names), leaving IsBusy false from the very first tick.
+                // Require the idle state to persist for several consecutive ticks AND
+                // a minimum wall-clock delay before concluding, so a race cannot be
+                // mistaken for a completed teleport.
+                this.teleportSettledTicks++;
+                var elapsed = DateTime.UtcNow - this.teleportStartedAt;
+
+                if (this.teleportSettledTicks < TeleportSettleTicks
+                    || elapsed < TimeSpan.FromSeconds(TeleportMinWaitSeconds))
                 {
                     return;
                 }
 
-                // Teleport finished; give the zone a moment to stream, then look for
-                // the board again on a later tick.
+                // Give the newly loaded zone time to stream objects in before we
+                // decide there is no board.
                 var board = this.FindMarketBoard();
                 if (board is not null)
                 {
@@ -369,11 +544,28 @@ public sealed class MarketBoardNavigator
                         ? "市场布告板"
                         : board.Name.TextValue;
                     this.WalkTo(board.Position, boardName);
+                    break;
+                }
+
+                // Still nothing: confirm we actually changed zone before complaining.
+                var target = this.configuration.SelectedMarketCity;
+                var arrived = target is not null
+                              && target.TerritoryTypeId != 0
+                              && this.clientState.TerritoryType == target.TerritoryTypeId;
+
+                this.Phase = TravelPhase.Idle;
+
+                if (arrived)
+                {
+                    this.activity.Warn(
+                        $"已到达「{target!.DisplayName}」，但未识别到市场布告板对象。" +
+                        "可手动走近后重试（布告板对象在较远处可能未加载）。");
                 }
                 else
                 {
-                    this.Phase = TravelPhase.Idle;
-                    this.activity.Warn("传送完成，但当前地图仍未发现市场布告板。可尝试手动走近后重试。");
+                    this.activity.Warn(
+                        "传送似乎没有生效（当前地图未变化）。请确认已在游戏内解锁该主城的以太之光，" +
+                        "或手动传送一次后再试。");
                 }
 
                 break;

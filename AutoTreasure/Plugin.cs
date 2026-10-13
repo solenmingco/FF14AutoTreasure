@@ -75,7 +75,8 @@ public sealed class Plugin : IDalamudPlugin
             this.Lifestream,
             ObjectTable,
             ClientState,
-            DataManager);
+            DataManager,
+            Log);
 
         this.Automation = new AutomationController(this, this.Inventory, this.Activity);
 
