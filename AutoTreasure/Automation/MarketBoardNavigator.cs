@@ -17,16 +17,24 @@ public sealed class MarketCity
     public required string DisplayName { get; init; }
 
     /// <summary>
-    /// Argument passed to Lifestream's <c>tp</c> command. Left null for cities we
-    /// cannot teleport to by name, in which case the user travels manually.
+    /// Argument passed to Lifestream's <c>tp</c> command. Null for cities we cannot
+    /// teleport to by name, in which case the user travels manually.
     /// </summary>
     public string? TeleportArgument { get; init; }
 
     /// <summary>
-    /// Aetheryte sheet row ids that identify this city, used both to confirm we
-    /// actually arrived and as a typed teleport fallback.
+    /// The territory this city is in, used to tell whether the player is already
+    /// there. Verified against the game's Map sheet.
     /// </summary>
-    public uint[] AetheryteRowIds { get; init; } = Array.Empty<uint>();
+    public uint TerritoryTypeId { get; init; }
+
+    /// <summary>
+    /// Published market board map coordinates, used only as a last-resort fallback
+    /// when no board object is streamed in. The runtime object scan is preferred
+    /// because it reflects the real, current world position.
+    /// </summary>
+    public float? FallbackMapX { get; init; }
+    public float? FallbackMapY { get; init; }
 
     public override string ToString() => this.DisplayName;
 }
@@ -48,25 +56,35 @@ public sealed class MarketCity
 /// </summary>
 public sealed class MarketBoardNavigator
 {
-    /// <summary>Well-known EObj row ids, used as a fast path when present.</summary>
-    private const uint MarketBoardEObjRowId = 2000442;
-    private const uint RetainerBellEObjRowId = 2000401;
+    /// <summary>Well-known EObj row ids for market boards, used as a fast path.</summary>
+    private static readonly uint[] MarketBoardEObjRowIds = { 2000073, 2000402, 2000440, 2000442 };
 
-    /// <summary>Substrings that identify a market board, across clients.</summary>
+    /// <summary>Well-known EObj row ids for summoning bells (adjacent to boards).</summary>
+    private static readonly uint[] BellEObjRowIds = { 2000072, 2000401, 2000403, 2000439, 2000441 };
+
+    /// <summary>
+    /// Substrings identifying a market board, matched case-insensitively.
+    ///
+    /// The Chinese strings are listed first because this build targets the Chinese
+    /// client. The English/Japanese forms are kept so the plugin still works if run
+    /// on another client. The Chinese terms could not be verified against a primary
+    /// source (huijiwiki blocks scrapers), so the EObj-name lookup below is the
+    /// primary mechanism and these hints are only a fallback.
+    /// </summary>
     private static readonly string[] MarketBoardNameHints =
     {
         "市场布告板",   // zh-CN
         "市場布告板",   // zh-TW
-        "Market Board", // en
+        "market board", // en (the game stores these lower-case)
         "マーケットボード", // ja
     };
 
-    /// <summary>Substrings that identify a retainer bell (adjacent to the board).</summary>
+    /// <summary>Substrings identifying a retainer bell.</summary>
     private static readonly string[] BellNameHints =
     {
         "传唤铃",
         "傳喚鈴",
-        "Summoning Bell",
+        "summoning bell",
         "リテイナーベル",
     };
 
@@ -109,33 +127,49 @@ public sealed class MarketBoardNavigator
     /// <summary>Where we told vnavmesh to walk, for status display.</summary>
     public Vector3? LastDestination { get; private set; }
 
-    /// <summary>Resolve a client-appropriate market board name from the game sheets.</summary>
-    private string? ResolveMarketBoardName()
+    /// <summary>
+    /// Resolve the localized market board / bell names from the game's EObjName sheet.
+    ///
+    /// IMPORTANT: <c>EObjName.Name</c> is EMPTY for these rows; the actual text lives
+    /// in <c>Singular</c> / <c>Plural</c> (verified: row 2000073 -> "market board",
+    /// row 2000072 -> "summoning bell"). Matching on <c>Name</c> silently finds nothing.
+    /// </summary>
+    private (string? Board, string? Bell) ResolveEObjNames()
     {
         try
         {
             var sheet = this.dataManager.GetExcelSheet<EObjName>();
-            var row = sheet.GetRowOrDefault(MarketBoardEObjRowId);
-            if (row is not null)
+
+            string? Singular(uint rowId)
             {
-                var name = row.Value.Singular.ToString();
-                if (!string.IsNullOrWhiteSpace(name))
+                var row = sheet.GetRowOrDefault(rowId);
+                if (row is null)
                 {
-                    return name;
+                    return null;
                 }
+
+                var s = row.Value.Singular.ToString();
+                return string.IsNullOrWhiteSpace(s) ? null : s;
             }
+
+            return (Singular(MarketBoardEObjRowIds[0]), Singular(BellEObjRowIds[0]));
         }
         catch
         {
-            // Fall through to hint-based matching.
+            return (null, null);
         }
-
-        return null;
     }
 
     /// <summary>
-    /// Find the nearest market board (or, failing that, retainer bell) in the
+    /// Find the nearest market board — or, failing that, retainer bell — in the
     /// current territory.
+    ///
+    /// Matching is done in two passes so it stays locale-independent:
+    ///   1. by the object's EObj DataId (verified ids for boards and bells), and
+    ///   2. by name, using the localized name read from EObjName plus the
+    ///      hardcoded hints.
+    /// A retainer bell is accepted as a stand-in because it sits beside the board and
+    /// is often the only one of the pair streamed in.
     /// </summary>
     public IGameObject? FindMarketBoard()
     {
@@ -145,12 +179,12 @@ public sealed class MarketBoardNavigator
             return null;
         }
 
-        var sheetName = this.ResolveMarketBoardName();
+        var (sheetBoardName, sheetBellName) = this.ResolveEObjNames();
 
-        IGameObject? bestMatch = null;
-        var bestDistance = float.MaxValue;
-        IGameObject? bellMatch = null;
-        var bellDistance = float.MaxValue;
+        IGameObject? bestBoard = null;
+        var bestBoardDistance = float.MaxValue;
+        IGameObject? bestBell = null;
+        var bestBellDistance = float.MaxValue;
 
         foreach (var obj in this.objectTable)
         {
@@ -159,35 +193,39 @@ public sealed class MarketBoardNavigator
                 continue;
             }
 
-            var name = obj.Name.TextValue;
-            if (string.IsNullOrWhiteSpace(name))
-            {
-                continue;
-            }
-
             var distance = Vector3.Distance(player.Position, obj.Position);
+            var name = obj.Name.TextValue ?? string.Empty;
+            // BaseId is the current name; DataId was the pre-API-15 spelling.
+            var dataId = obj.BaseId;
 
-            var isBoard = MarketBoardNameHints.Any(h => name.Contains(h, StringComparison.OrdinalIgnoreCase))
-                          || (sheetName is not null && name.Contains(sheetName, StringComparison.OrdinalIgnoreCase));
+            var isBoardById = MarketBoardEObjRowIds.Contains(dataId);
+            var isBellById = BellEObjRowIds.Contains(dataId);
 
-            if (isBoard && distance < bestDistance)
+            var isBoardByName = name.Length > 0
+                && (MarketBoardNameHints.Any(h => name.Contains(h, StringComparison.OrdinalIgnoreCase))
+                    || (sheetBoardName is not null
+                        && name.Contains(sheetBoardName, StringComparison.OrdinalIgnoreCase)));
+
+            var isBellByName = name.Length > 0
+                && (BellNameHints.Any(h => name.Contains(h, StringComparison.OrdinalIgnoreCase))
+                    || (sheetBellName is not null
+                        && name.Contains(sheetBellName, StringComparison.OrdinalIgnoreCase)));
+
+            if ((isBoardById || isBoardByName) && distance < bestBoardDistance)
             {
-                bestDistance = distance;
-                bestMatch = obj;
+                bestBoardDistance = distance;
+                bestBoard = obj;
                 continue;
             }
 
-            var isBell = BellNameHints.Any(h => name.Contains(h, StringComparison.OrdinalIgnoreCase));
-            if (isBell && distance < bellDistance)
+            if ((isBellById || isBellByName) && distance < bestBellDistance)
             {
-                bellDistance = distance;
-                bellMatch = obj;
+                bestBellDistance = distance;
+                bestBell = obj;
             }
         }
 
-        // A retainer bell sits next to the board and is a reliable stand-in when the
-        // board object itself is not streamed in.
-        return bestMatch ?? bellMatch;
+        return bestBoard ?? bestBell;
     }
 
     public string GetAvailabilityText()
@@ -226,7 +264,12 @@ public sealed class MarketBoardNavigator
         var board = this.FindMarketBoard();
         if (board is not null)
         {
-            return this.WalkTo(board.Position, board.Name.TextValue);
+            var name = string.IsNullOrWhiteSpace(board.Name.TextValue)
+                ? "市场布告板"
+                : board.Name.TextValue;
+            var distance = Vector3.Distance(this.objectTable.LocalPlayer.Position, board.Position);
+            this.activity.Add($"已定位到「{name}」，距离 {distance:F1} yalms。");
+            return this.WalkTo(board.Position, name);
         }
 
         // Otherwise we need to travel to the selected city first.
@@ -234,6 +277,12 @@ public sealed class MarketBoardNavigator
         if (city is null)
         {
             return "当前地图没有市场布告板，请先在设置中选择目标主城。";
+        }
+
+        // Already in the right zone but no board found: walking there would not help.
+        if (city.TerritoryTypeId != 0 && this.clientState.TerritoryType == city.TerritoryTypeId)
+        {
+            return $"已在「{city.DisplayName}」，但没有找到市场布告板对象。请走近一些后重试。";
         }
 
         if (!this.lifestream.IsAvailable)
@@ -316,7 +365,10 @@ public sealed class MarketBoardNavigator
                 var board = this.FindMarketBoard();
                 if (board is not null)
                 {
-                    this.WalkTo(board.Position, board.Name.TextValue);
+                    var boardName = string.IsNullOrWhiteSpace(board.Name.TextValue)
+                        ? "市场布告板"
+                        : board.Name.TextValue;
+                    this.WalkTo(board.Position, boardName);
                 }
                 else
                 {
