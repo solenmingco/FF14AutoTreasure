@@ -1,0 +1,19 @@
+[
+  {
+    "Author": "mingke",
+    "Name": "FF14 自动挖宝助手",
+    "Description": "面向国服（卫月）的 FFXIV 挖宝流程自动化助手，实现买图、读图队列、垃圾清理与总控面板。",
+    "InternalName": "AutoTreasure",
+    "AssemblyVersion": "0.1.0.0",
+    "TestingAssemblyVersion": null,
+    "RepoUrl": "https://github.com/mingke/FF14AutoTreasure",
+    "ApplicableVersion": "any",
+    "DalamudApiLevel": 15,
+    "Punchline": "自动买图、读图、按队列挖宝，并自动清理背包垃圾。",
+    "IsHide": false,
+    "IsTestingExclusive": false,
+    "DownloadLinkInstall": "https://github.com/mingke/FF14AutoTreasure/releases/latest/download/latest.zip",
+    "DownloadLinkUpdate": "https://github.com/mingke/FF14AutoTreasure/releases/latest/download/latest.zip",
+    "LastUpdate": "0"
+  }
+]
