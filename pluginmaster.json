@@ -2,18 +2,18 @@
   {
     "Author": "solenmingco",
     "Name": "FF14 自动挖宝助手",
-    "Description": "面向国服（卫月）的 FFXIV 挖宝流程自动化助手，实现买图、读图队列、垃圾清理与总控面板。",
+    "Description": "面向国服（卫月）的 FFXIV 挖宝流程自动化助手。藏宝图等级下拉选择、自动前往主城市场布告板（vnavmesh 寻路 + Lifestream 跨城传送）、按物品名搜索配置丢弃、总控与收益统计。",
     "InternalName": "AutoTreasure",
-    "AssemblyVersion": "0.1.0.0",
+    "AssemblyVersion": "0.2.0.0",
     "TestingAssemblyVersion": null,
     "RepoUrl": "https://github.com/solenmingco/FF14AutoTreasure",
     "ApplicableVersion": "any",
     "DalamudApiLevel": 15,
-    "Punchline": "自动买图、读图、按队列挖宝，并自动清理背包垃圾。",
+    "Punchline": "藏宝图等级下拉、自动前往市场布告板、按掉落物清理背包。",
     "IsHide": false,
     "IsTestingExclusive": false,
     "DownloadLinkInstall": "https://github.com/solenmingco/FF14AutoTreasure/releases/latest/download/latest.zip",
     "DownloadLinkUpdate": "https://github.com/solenmingco/FF14AutoTreasure/releases/latest/download/latest.zip",
-    "LastUpdate": "1791871423"
+    "LastUpdate": "1791873617"
   }
 ]
