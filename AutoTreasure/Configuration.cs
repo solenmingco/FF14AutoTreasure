@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using AutoTreasure.Automation;
 using Dalamud.Configuration;
 
 namespace AutoTreasure;
@@ -39,8 +40,24 @@ public sealed class Configuration : IPluginConfiguration
     /// <summary>Target number of maps to keep in stock before buying more.</summary>
     public int DesiredMapStock { get; set; } = 10;
 
-    /// <summary>Item IDs of treasure maps this profile is allowed to buy/use.</summary>
+    /// <summary>
+    /// Item ids of the treasure maps the user selected by grade from the dropdown.
+    /// Populated from the game's TreasureHuntRank sheet, never hardcoded, because the
+    /// Chinese client may not have every grade the global client has.
+    /// </summary>
     public List<uint> MapItemIds { get; set; } = new();
+
+    /// <summary>
+    /// Grade codes ("G1".."G18", "S1".."S5") the user ticked. Kept alongside the ids
+    /// so the selection can be restored once the sheet is available again.
+    /// </summary>
+    public List<string> SelectedMapGrades { get; set; } = new();
+
+    /// <summary>Display name of the chosen market-board city, or null for none.</summary>
+    public string? SelectedMarketCityName { get; set; }
+
+    /// <summary>Mirror of the city selection for convenience.</summary>
+    public MarketCity? SelectedMarketCity => MarketCities.ByName(this.SelectedMarketCityName);
 
     // ------------------------------------------------------------ 2 读图阶段
     /// <summary>Keep at most this many maps in the player's own bags.</summary>
@@ -64,6 +81,12 @@ public sealed class Configuration : IPluginConfiguration
 
     /// <summary>Item IDs explicitly always discarded.</summary>
     public List<uint> DiscardBlacklist { get; set; } = new();
+
+    /// <summary>
+    /// Item ids selected from the per-map-grade drop dropdown. Stored separately from
+    /// the manual blacklist so the UI can show which grade a rule came from.
+    /// </summary>
+    public List<uint> SelectedDropItemIds { get; set; } = new();
 
     /// <summary>Item IDs that must never be discarded, regardless of other rules.</summary>
     public List<uint> DiscardWhitelist { get; set; } = new();

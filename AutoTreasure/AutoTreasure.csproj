@@ -1,26 +1,31 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <Project Sdk="Dalamud.NET.Sdk/15.0.0">
   <PropertyGroup>
-    <Version>0.1.0.0</Version>
+    <Version>0.2.0.0</Version>
 
     <!-- Manifest fields. DalamudPackager copies these into AutoTreasure.json inside the zip. -->
     <Author>solenmingco</Author>
     <Name>FF14 自动挖宝助手</Name>
-    <Punchline>自动买图、读图、按队列挖宝，并自动清理背包垃圾。</Punchline>
+    <Punchline>藏宝图等级下拉选择、自动前往市场布告板、按掉落物清理背包。</Punchline>
     <Description>面向国服（卫月）的 FFXIV 挖宝流程自动化助手。
 
 当前版本实现的阶段：
-  1 买图阶段   — 地图库存检查、金币余额检查
-  2 读图阶段   — 读图、按背包/陆行鸟背包拆分队列
-  6 丢弃垃圾   — 黑名单/白名单判定、背包满触发清理
-  7 总控与设置 — 循环总开关、紧急暂停、日志与收益统计
+  1 买图阶段     — 藏宝图等级下拉选择（从游戏数据读取，支持 G1-G18 / S1-S5）
+                   金币余额检查、地图库存统计
+  2 读图阶段     — 背包 / 陆行鸟背包分仓队列统计
+  导航           — 自动前往任意主城市场布告板（vnavmesh 寻路 + Lifestream 跨城传送）
+  6 丢弃垃圾     — 按物品名搜索勾选、黑白名单、售价与品质判定、背包满触发清理
+  7 总控与设置   — 循环总开关、紧急暂停、日志与收益统计、拟人化间隔
 
-寻路（阶段 3）、自动战斗（阶段 4）与副本（阶段 5）本版本提供接口占位，
-需要在游戏内实测后逐步接入。
+附带已读取的藏宝点坐标数据（TreasureSpot），为后续自动寻路挖宝打底。
+自动战斗（阶段 4）与副本（阶段 5）尚未实现，界面会如实标注。
 
-主命令：/at 或 /autotreasure</Description>
+主命令：/at 或 /autotreasure
+  /at mb     前往市场布告板
+  /at on     开始循环
+  /at panic  紧急停止</Description>
     <RepoUrl>https://github.com/solenmingco/FF14AutoTreasure</RepoUrl>
-    <Tags>treasure;automation;inventory;qol</Tags>
+    <Tags>treasure;automation;inventory;qol;navigation</Tags>
     <CategoryTags>utility</CategoryTags>
     <LoadSync>true</LoadSync>
     <CanUnloadAsync>true</CanUnloadAsync>

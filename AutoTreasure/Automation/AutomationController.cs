@@ -134,6 +134,10 @@ public sealed class AutomationController : IDisposable
     {
         try
         {
+            // Advance any market-board travel regardless of the automation switch,
+            // because the user can start it manually from the UI or /at mb.
+            this.plugin.MarketBoard?.Tick();
+
             this.CheckPanicHotkey();
 
             if (!this.configuration.AutomationEnabled || this.configuration.EmergencyStop)

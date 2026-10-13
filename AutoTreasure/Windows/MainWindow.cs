@@ -92,6 +92,36 @@ public sealed class MainWindow : Window, IDisposable
 
         ImGui.Separator();
 
+        // ------------------------------------------------------- 地图与导航
+        if (ImGui.CollapsingHeader("市场布告板导航", ImGuiTreeNodeFlags.DefaultOpen))
+        {
+            var mb = this.plugin.MarketBoard;
+
+            ImGui.Text("目标主城：");
+            ImGui.SameLine();
+            ImGui.TextColored(new Vector4(0.6f, 0.85f, 1f, 1f),
+                config.SelectedMarketCityName ?? "（未选择）");
+
+            if (ImGui.Button("前往市场布告板", new Vector2(170, 0)))
+            {
+                this.plugin.Activity.Add(this.plugin.TravelToMarketBoard());
+            }
+
+            ImGui.SameLine();
+            if (ImGui.Button("取消", new Vector2(80, 0)))
+            {
+                mb?.Cancel();
+            }
+
+            ImGui.TextDisabled($"vnavmesh：{(this.plugin.Navmesh.IsAvailable ? "可用" : "不可用")}   " +
+                               $"Lifestream：{(this.plugin.Lifestream.IsAvailable ? "可用" : "不可用")}");
+
+            if (mb is not null)
+            {
+                ImGui.Text($"状态：{mb.Phase}   {mb.GetAvailabilityText()}");
+            }
+        }
+
         // ------------------------------------------------------- 库存概览
         if (ImGui.CollapsingHeader("库存与金币", ImGuiTreeNodeFlags.DefaultOpen))
         {
@@ -104,10 +134,14 @@ public sealed class MainWindow : Window, IDisposable
             ImGui.Text($"地图：背包 {inBags} 张 / 陆行鸟背包 {inSaddle} 张");
             ImGui.Text($"背包剩余空间：{free} 格");
 
+            var gradeCount = this.plugin.Catalog.MapGrades.Count;
+            ImGui.Text($"已识别的藏宝图等级：{gradeCount} 个（已选 {config.MapItemIds.Count} 个）");
+
             ImGui.SameLine();
             if (ImGui.Button("刷新"))
             {
-                this.plugin.Activity.Add("已刷新库存快照。");
+                this.plugin.Catalog.Invalidate();
+                this.plugin.Activity.Add("已刷新库存与游戏数据。");
             }
         }
 

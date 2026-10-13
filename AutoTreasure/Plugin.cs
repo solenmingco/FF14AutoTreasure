@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using AutoTreasure.Automation;
+using AutoTreasure.Data;
 using AutoTreasure.Windows;
 using Dalamud.Game.Command;
 using Dalamud.Game.Gui.Dtr;
@@ -39,6 +40,18 @@ public sealed class Plugin : IDalamudPlugin
     /// <summary>Shared inventory scanning helpers.</summary>
     public InventoryScanner Inventory { get; }
 
+    /// <summary>Read-only catalog of game data (map grades, items).</summary>
+    public GameDataCatalog Catalog { get; }
+
+    /// <summary>vnavmesh IPC, for walking.</summary>
+    public NavmeshIpc Navmesh { get; }
+
+    /// <summary>Lifestream IPC, for teleporting between cities.</summary>
+    public LifestreamIpc Lifestream { get; }
+
+    /// <summary>Market board travel.</summary>
+    public MarketBoardNavigator? MarketBoard { get; }
+
     /// <summary>The automation state machine.</summary>
     public AutomationController Automation { get; }
 
@@ -52,6 +65,18 @@ public sealed class Plugin : IDalamudPlugin
         this.Configuration = PluginInterface.GetPluginConfig() as Configuration ?? new Configuration();
 
         this.Inventory = new InventoryScanner(this.Configuration, this.Activity);
+        this.Catalog = new GameDataCatalog(DataManager, Log);
+        this.Navmesh = new NavmeshIpc(PluginInterface, Log);
+        this.Lifestream = new LifestreamIpc(PluginInterface, Log);
+        this.MarketBoard = new MarketBoardNavigator(
+            this.Configuration,
+            this.Activity,
+            this.Navmesh,
+            this.Lifestream,
+            ObjectTable,
+            ClientState,
+            DataManager);
+
         this.Automation = new AutomationController(this, this.Inventory, this.Activity);
 
         this.ConfigWindow = new ConfigWindow(this);
@@ -86,6 +111,8 @@ public sealed class Plugin : IDalamudPlugin
     public void Dispose()
     {
         this.Automation.Dispose();
+        this.Navmesh.Dispose();
+        this.Lifestream.Dispose();
 
         PluginInterface.UiBuilder.Draw -= this.WindowSystem.Draw;
         PluginInterface.UiBuilder.OpenConfigUi -= this.ToggleConfigUi;
@@ -124,6 +151,20 @@ public sealed class Plugin : IDalamudPlugin
                 this.Automation.EmergencyStop();
                 break;
 
+            case "mb":
+            case "market":
+                this.Activity.Add(this.TravelToMarketBoard());
+                break;
+
+            case "clearmb":
+                this.MarketBoard?.Cancel();
+                break;
+
+            case "reload":
+                this.Catalog.Invalidate();
+                this.Activity.Success("游戏数据缓存已刷新。");
+                break;
+
             case "clear":
                 this.Activity.Clear();
                 Chat.Print("[挖宝] 日志已清空。");
@@ -135,9 +176,23 @@ public sealed class Plugin : IDalamudPlugin
                 break;
 
             default:
-                Chat.Print($"[挖宝] 未知参数 “{args}”。可用：on / off / panic / clear / ui");
+                Chat.Print($"[挖宝] 未知参数 “{args}”。可用：on / off / panic / mb / clearmb / reload / clear / ui");
                 break;
         }
+    }
+
+    /// <summary>
+    /// Start travelling to the market board. Returns a description of what was done,
+    /// which the caller shows in the activity log.
+    /// </summary>
+    public string TravelToMarketBoard()
+    {
+        if (this.MarketBoard is null)
+        {
+            return "市场布告板导航未初始化。";
+        }
+
+        return this.MarketBoard.TravelToMarketBoard();
     }
 
     public void ToggleConfigUi() => this.ConfigWindow.Toggle();
